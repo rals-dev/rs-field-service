@@ -84,7 +84,14 @@ func (t *TimeController) Create(context *gin.Context) {
 		return
 	}
 	result, err := t.service.GetTime().Create(context, &request)
-
+	if err != nil {
+		response.HttpResponse(response.ParamHTTPResp{
+			Code: http.StatusBadRequest,
+			Err:  err,
+			Gin:  context,
+		})
+		return
+	}
 	response.HttpResponse(response.ParamHTTPResp{
 		Code: http.StatusCreated,
 		Gin:  context,

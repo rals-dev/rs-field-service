@@ -1,0 +1,36 @@
+# Secrets and local configuration must never enter the build context.
+.env
+.env.*
+config.json
+*.pem
+*.key
+*.p12
+*.crt
+credentials*.json
+service-account*.json
+
+# Version control and local tooling state.
+.git
+.gitignore
+.github
+.idea
+.vscode
+
+# Build output and live-reload artifacts.
+bin
+tmp
+field-service
+*.exe
+*.test
+*.out
+
+# Files that are irrelevant to compiling the binary.
+Dockerfile
+.dockerignore
+docker-compose.yml
+docker-compose.yaml
+Jenkinsfile
+Makefile
+README.md
+LICENSE
+*.md

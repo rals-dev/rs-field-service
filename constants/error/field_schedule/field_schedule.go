@@ -5,9 +5,11 @@ import "errors"
 var (
 	ErrFieldScheduleNotFound = errors.New("field schedule not found")
 	ErrFieldScheduleIsExist  = errors.New("field schedule is exist")
+	ErrFieldScheduleIsBooked = errors.New("field schedule is already booked")
 )
 
 var FieldScheduleErrors = []error{
 	ErrFieldScheduleNotFound,
 	ErrFieldScheduleIsExist,
+	ErrFieldScheduleIsBooked,
 }

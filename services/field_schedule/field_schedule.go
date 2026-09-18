@@ -4,6 +4,7 @@ import (
 	"context"
 	"field-service/common/utils"
 	"field-service/constants"
+	errorConstants "field-service/constants/error"
 	errFieldSchedule "field-service/constants/error/field_schedule"
 	"field-service/domain/dto"
 	"field-service/domain/models"
@@ -153,15 +154,23 @@ func (f *FieldScheduleService) Create(ctx context.Context, request *dto.FieldSch
 	if err != nil {
 		return err
 	}
+	// The date is parsed before anything is looked up: the existence check and
+	// the row that is inserted have to agree on the day, and a string the
+	// database would coerce differently than Go must not reach either of them.
+	dateParsed, err := time.Parse(time.DateOnly, request.Date)
+	if err != nil {
+		return errorConstants.ErrRequestValidation
+	}
+	normalizedDate := dateParsed.Format(time.DateOnly)
+
 	fieldSchedules := make([]models.FieldSchedule, 0, len(request.TimeIDs))
-	dateParsed, _ := time.Parse(time.DateOnly, request.Date)
 	for _, timeID := range request.TimeIDs {
 		scheduleTime, err := f.repository.GetTime().FindByUUID(ctx, timeID)
 		if err != nil {
 			return err
 		}
 		schedule, err := f.repository.GetFieldSchedule().
-			FindByDateAndTimeId(ctx, request.Date, int(scheduleTime.ID), int(field.ID))
+			FindByDateAndTimeId(ctx, normalizedDate, int(scheduleTime.ID), int(field.ID))
 		if err != nil {
 			return err
 		}
@@ -196,30 +205,32 @@ func (f *FieldScheduleService) Update(
 	if err != nil {
 		return nil, err
 	}
-	isTimeExist, err := f.repository.GetFieldSchedule().FindByDateAndTimeId(
-		ctx,
-		request.Date,
-		int(scheduleTime.ID),
-		int(fieldSchedule.Field.ID),
-	)
+	dateParsed, err := time.Parse(time.DateOnly, request.Date)
 	if err != nil {
-		return nil, err
+		return nil, errorConstants.ErrRequestValidation
 	}
-	if isTimeExist != nil && request.Date != fieldSchedule.Date.Format(time.DateOnly) {
-		checkDate, err := f.repository.GetFieldSchedule().FindByDateAndTimeId(
+	normalizedDate := dateParsed.Format(time.DateOnly)
+
+	// The slot moves whenever either the date or the time changes, so both have
+	// to be re-checked for a conflict; checking only the date let a time-only
+	// move collide with an existing schedule.
+	dateChanged := normalizedDate != fieldSchedule.Date.Format(time.DateOnly)
+	timeChanged := scheduleTime.ID != fieldSchedule.TimeID
+	if dateChanged || timeChanged {
+		existingSchedule, err := f.repository.GetFieldSchedule().FindByDateAndTimeId(
 			ctx,
-			request.Date,
+			normalizedDate,
 			int(scheduleTime.ID),
-			int(fieldSchedule.Field.ID),
+			int(fieldSchedule.FieldID),
 		)
 		if err != nil {
 			return nil, err
 		}
-		if checkDate != nil {
+		// The schedule being edited is not a conflict with itself.
+		if existingSchedule != nil && existingSchedule.UUID != fieldSchedule.UUID {
 			return nil, errFieldSchedule.ErrFieldScheduleIsExist
 		}
 	}
-	dateParsed, _ := time.Parse(time.DateOnly, request.Date)
 	fieldResult, err := f.repository.GetFieldSchedule().Update(ctx, uuid, &models.FieldSchedule{
 		Date:   dateParsed,
 		TimeID: scheduleTime.ID,
@@ -244,17 +255,10 @@ func (f *FieldScheduleService) UpdateStatus(
 	ctx context.Context,
 	request *dto.UpdateStatusFieldScheduleRequest,
 ) error {
-	for _, item := range request.FieldScheduleIDs {
-		_, err := f.repository.GetFieldSchedule().FindByUUID(ctx, item)
-		if err != nil {
-			return err
-		}
-		err = f.repository.GetFieldSchedule().UpdateStatus(ctx, constants.Booked, item)
-		if err != nil {
-			return err
-		}
-	}
-	return nil
+	// Handing the whole batch to the repository keeps the booking atomic: a
+	// slot that is taken midway rolls the other slots back instead of leaving
+	// the customer with a partial booking.
+	return f.repository.GetFieldSchedule().UpdateStatus(ctx, constants.Booked, request.FieldScheduleIDs)
 }
 
 func (f *FieldScheduleService) Delete(ctx context.Context, uuid string) error {
