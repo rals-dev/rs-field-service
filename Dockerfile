@@ -1,29 +1,31 @@
-FROM golang:1.23.4-alpine3.21 as builder
+FROM golang:1.23.4-alpine3.21 AS builder
 
-RUN apk update
-RUN apk add git openssh tzdata build-base python3 net-tools
+WORKDIR /src
 
-WORKDIR /app
+# Dependencies are resolved first so the module layer survives source changes.
+COPY go.mod go.sum ./
+RUN go mod download
 
-COPY .env.example .env
 COPY . .
 
-RUN go install github.com/buu700/gin@latest
-RUN go mod tidy
-
-RUN make build
+# Static binary: the runtime stage carries no toolchain and no libc to link to.
+RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/field-service
 
 FROM alpine:latest
 
-RUN apk update && apk upgrade && \
-    apk --update --no-cache add tzdata && \
-    apk --no-cache add curl && \
-    mkdir /app
+# ca-certificates for outbound TLS (GCS, internal services) and tzdata because
+# the service pins time.Local to Asia/Jakarta at startup.
+RUN apk --no-cache add ca-certificates tzdata && \
+    adduser -D -H -u 10001 appuser
 
 WORKDIR /app
 
-EXPOSE 8002
+# Only the compiled binary crosses the stage boundary: no sources, no .env,
+# no config.json, no build toolchain.
+COPY --from=builder /out/field-service /app/field-service
 
-COPY --from=builder /app /app
+USER appuser
+
+EXPOSE 8002
 
 ENTRYPOINT [ "/app/field-service" ]

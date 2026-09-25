@@ -8,13 +8,48 @@ import (
 	errField "field-service/constants/error/field"
 	"field-service/domain/dto"
 	"field-service/domain/models"
-	"fmt"
 	"github.com/google/uuid"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
+	"strings"
 )
 
 type FieldRepository struct {
 	db *gorm.DB
+}
+
+// sortableColumns is the allowlist of physical columns a client is allowed to
+// order by. Ordering is the only dynamic fragment of the query, so anything
+// outside this map is discarded instead of reaching the generated SQL.
+var sortableColumns = map[string]string{
+	"id":             "id",
+	"code":           "code",
+	"name":           "name",
+	"price_per_hour": "price_per_hour",
+	"create_at":      "create_at",
+	"update_at":      "update_at",
+}
+
+const defaultSortColumn = "create_at"
+
+// buildOrderBy resolves the requested column and direction against the
+// allowlist and returns a GORM order clause instead of a raw SQL string.
+// Unknown columns fall back to defaultSortColumn and any direction other than
+// "asc" sorts descending.
+func buildOrderBy(sortColumn *string, sortOrder *string) clause.OrderByColumn {
+	column := defaultSortColumn
+	if sortColumn != nil {
+		if allowed, ok := sortableColumns[strings.ToLower(strings.TrimSpace(*sortColumn))]; ok {
+			column = allowed
+		}
+	}
+
+	desc := true
+	if sortOrder != nil && strings.EqualFold(strings.TrimSpace(*sortOrder), "asc") {
+		desc = false
+	}
+
+	return clause.OrderByColumn{Column: clause.Column{Name: column}, Desc: desc}
 }
 
 func (f *FieldRepository) FindAllWithPagination(
@@ -23,13 +58,8 @@ func (f *FieldRepository) FindAllWithPagination(
 ) ([]models.Field, int64, error) {
 	var (
 		fields []models.Field
-		sort   string
 		total  int64
 	)
-	sort = "create_at desc"
-	if param.SortColumn != nil {
-		sort = fmt.Sprintf("%s %s", param.SortColumn, param.SortOrder)
-	}
 
 	limit := param.Limit
 	offset := (param.Page - 1) * limit
@@ -37,7 +67,7 @@ func (f *FieldRepository) FindAllWithPagination(
 		WithContext(ctx).
 		Limit(limit).
 		Offset(offset).
-		Order(sort).
+		Order(buildOrderBy(param.SortColumn, param.SortOrder)).
 		Find(&fields).
 		Error
 	if err != nil {

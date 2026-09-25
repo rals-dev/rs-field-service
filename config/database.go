@@ -23,6 +23,9 @@ func InitDatabase() (*gorm.DB, error) {
 
 	db, err := gorm.Open(postgres.Open(uri), &gorm.Config{
 		Logger: logger.Default.LogMode(logger.Info),
+		// Surfaces unique constraint violations as gorm.ErrDuplicatedKey so the
+		// repositories can map a lost create race onto a domain error.
+		TranslateError: true,
 	})
 	if err != nil {
 		return nil, err
